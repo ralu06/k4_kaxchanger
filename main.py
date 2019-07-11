@@ -2,12 +2,11 @@ from tkinter import *
 from tkinter import ttk
 import configparser
 import json
-import requests # peticiones http
+import requests
 
 DEFAULTPADDING = 4
 
-class Exchanger(Tk):
-
+class Exchanger(ttk.Frame):
     def __init__(self, parent):
         ttk.Frame.__init__(self, width="400", height="150")
         config = configparser.ConfigParser()
@@ -17,16 +16,24 @@ class Exchanger(Tk):
         self.all_symbols_ep = config['fixer.io']['ALL_SYMBOLS_EP']
         self.rate_ep = config['fixer.io']['RATE_LATEST_EP']
 
-        currencies = self.getCurrencies()
-
-        #variables de control
+        #Variables de control
         self.strInQuantity = StringVar(value="")
-        self.strInQuantity.trace('w', self.convertirDivisas)
+        self.oldInQuantity = self.strInQuantity.get()
+        self.strInQuantity.trace('w', self.validarCantidad)
 
-        self.strInCurrency =StringVar()
+        self.strInCurrency = StringVar()
         self.strOutCurrency = StringVar()
 
         self.pack_propagate(0)
+
+        frErrorMessages = ttk.Frame(self, height=40)
+        frErrorMessages.pack(side=BOTTOM, fill=X)
+        frErrorMessages.pack_propagate(0)
+
+        self.lblErrorMessages = ttk.Label(frErrorMessages, text="", width=50, foreground='red', anchor=CENTER)
+        self.lblErrorMessages.pack(side=BOTTOM, fill=BOTH, expand=True)
+
+
         frInCurrency = ttk.Frame(self)
         frInCurrency.pack_propagate(0)
 
@@ -34,9 +41,9 @@ class Exchanger(Tk):
         lblQ.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
 
         self.inQuantityEntry = ttk.Entry(frInCurrency, font=('Helvetica', 24, 'bold'), width=10, textvariable=self.strInQuantity)
-        self.inQuantityEntry.pack(side=TOP, fill=X)
+        self.inQuantityEntry.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
 
-        self.inCurrencyCombo = ttk.Combobox(frInCurrency, width=25, height=5, values=currencies, textvariable=self.strInCurrency)
+        self.inCurrencyCombo = ttk.Combobox(frInCurrency, width=25, height=5, textvariable=self.strInCurrency)
         self.inCurrencyCombo.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
         self.inCurrencyCombo.bind('<<ComboboxSelected>>', self.convertirDivisas)
 
@@ -48,35 +55,87 @@ class Exchanger(Tk):
         lblQ = ttk.Label(frOutCurrency, text="Cantidad")
         lblQ.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
 
-        self.outQuantityLbl = ttk.Label(frOutCurrency, font=('Helvetica', 24), anchor=E, width=10)
-        self.outQuantityLbl.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
+        self.outQuantityLbl = ttk.Label(frOutCurrency, font=('Helvetica', 26), anchor=E, width=10)
+        self.outQuantityLbl.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING, ipady=2)
 
-        self.outCurrencyCombo = ttk.Combobox(frOutCurrency, width=25, height=5, values=currencies, textvariable=self.strOutCurrency)
+        self.outCurrencyCombo = ttk.Combobox(frOutCurrency, width=25, height=5, textvariable=self.strOutCurrency)
         self.outCurrencyCombo.pack(side=TOP, fill=X, padx=DEFAULTPADDING, pady=DEFAULTPADDING)
         self.outCurrencyCombo.bind('<<ComboboxSelected>>', self.convertirDivisas)
-
+        
         frOutCurrency.pack(side=LEFT, fill=BOTH, expand=True)
 
-    def convertirDivisas (self, *args):  #array de argumentos
-        print("in", self.strInCurrency.get())
-        print("out", self.strOutCurrency.get())
-        print("Cantidad", self.strInQuantity.get())
+        url = self.all_symbols_ep.format(self.api_key)
+        self.accesoAPI(url, self.getCurrencies)
 
 
-    def getCurrencies(self):
-        response = requests.get(self.all_symbols_ep.format(self.api_key))
 
-        if response == 200:
-            currencies = json.loads(response.text)
-            result = []
-            symbols = currencies['symbols']
-            for symbol in symbols:
-                text = "{} - {}".format(symbol, symbols[symbol])
-                result.append(text)
-            return result
+    def validarCantidad(self, *args):
+        try:
+            v = float(self.strInQuantity.get())
+            self.oldInQuantity = v
+            self.convertirDivisas()
+        except:
+            self.strInQuantity.set(self.oldInQuantity)
+        
+
+    def accesoAPI(self, url, callback, **args):
+        response = requests.get(url)
+
+        if response.status_code == 200:
+            callback(response.text, **args)
         else:
-            print("Se ha producido un error al consultar symbols:", response.status_code)
-   
+            msgError = 'Error en acceso a {}. response-code: {}'.format(url, response.status_code)
+            raise Exception(msgError)        
+
+
+    def convertirDivisas(self, *args):
+        base = 'EUR'
+        _from = self.strInCurrency.get()
+        _from = _from[:3]
+        _to = self.strOutCurrency.get()
+        _to = _to[:3]
+        symbols = _from+","+_to
+        
+        if self.strInCurrency.get() and self.strOutCurrency.get() and self.strInQuantity.get(): 
+            self.lblErrorMessages.config(text='Conectando ...')
+
+            url = self.rate_ep.format(self.api_key, base, symbols)
+            self.accesoAPI(url, self.showConversionRate)
+            
+            #valor_label = Cantidad / tasa_conversion * tasa_conversion2
+
+
+
+    def showConversionRate(self, textdata):
+        data = json.loads(textdata)
+        if data['success']:
+            tasa_conversion = []
+            for tasa in data['rates']:
+                tasa_conversion.append(data['rates'][tasa])
+            self.lblErrorMessages.config(text='')
+        else:
+            msgError = "{} - {}".format(data['error']['code'], data['error']['type'] )
+            print(msgError)
+            raise Exception(msgError)
+
+
+        valor_label = round(float(self.strInQuantity.get()) / tasa_conversion[0] * tasa_conversion[1], 5)
+        self.outQuantityLbl.config(text=valor_label)
+
+
+
+    def getCurrencies(self, textdata):
+        currencies = json.loads(textdata)
+        result = []
+        symbols = currencies['symbols']
+        for symbol in symbols:
+            text = "{} - {}".format(symbol, symbols[symbol])
+            result.append(text)
+        
+        self.inCurrencyCombo.config(values = result)
+        self.outCurrencyCombo.config(values = result)
+
+
 
 class MainApp(Tk):
 
@@ -90,9 +149,7 @@ class MainApp(Tk):
     def start(self):
         self.mainloop()
 
+
 if __name__ == '__main__':
     exchanger = MainApp()
-    exchanger.start()
-
-
-
+exchanger.start()
