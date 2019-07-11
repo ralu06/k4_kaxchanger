@@ -6,6 +6,11 @@ import requests
 
 DEFAULTPADDING = 4
 
+class APIAccessError(Exception):
+    def __init__(self, cause):
+        Exception.__init__(self)
+        self.cause = cause
+
 class Exchanger(ttk.Frame):
     def __init__(self, parent):
         ttk.Frame.__init__(self, width="400", height="150")
@@ -65,7 +70,10 @@ class Exchanger(ttk.Frame):
         frOutCurrency.pack(side=LEFT, fill=BOTH, expand=True)
 
         url = self.all_symbols_ep.format(self.api_key)
-        self.accesoAPI(url, self.getCurrencies)
+        try:
+            self.accesoAPI(url, self.getCurrencies)
+        except APIAccessError as e:
+            self.lblErrorMessages.config(text=e.cause)
 
 
 
@@ -79,17 +87,21 @@ class Exchanger(ttk.Frame):
         
 
     def accesoAPI(self, url, callback, **args):
-        response = requests.get(url)
+        try:
+            response = requests.get(url)
+        except requests.exceptions.ConnectionError as e:
+            print(e)
+            raise APIAccessError('Error de conexion al servidor. Mire consola')
 
         if response.status_code == 200:
             callback(response.text, **args)
         else:
-            msgError = 'Error en acceso a {}. response-code: {}'.format(url, response.status_code)
-            raise Exception(msgError)        
+            msgError = '{} - {}'.format(response.status_code, url)
+            raise APIAccessError(msgError)        
 
 
     def convertirDivisas(self, *args):
-        base = 'EUR'
+        base = 'USD'
         _from = self.strInCurrency.get()
         _from = _from[:3]
         _to = self.strOutCurrency.get()
@@ -100,26 +112,27 @@ class Exchanger(ttk.Frame):
             self.lblErrorMessages.config(text='Conectando ...')
 
             url = self.rate_ep.format(self.api_key, base, symbols)
-            self.accesoAPI(url, self.showConversionRate)
-            
-            #valor_label = Cantidad / tasa_conversion * tasa_conversion2
+
+            try:
+                self.accesoAPI(url, self.showConversionRate, From=_from, To=_to)
+            except APIAccessError as e:
+                self.lblErrorMessages.config(text=e.cause)        
 
 
 
-    def showConversionRate(self, textdata):
+    def showConversionRate(self, textdata, **args):
         data = json.loads(textdata)
         if data['success']:
-            tasa_conversion = []
-            for tasa in data['rates']:
-                tasa_conversion.append(data['rates'][tasa])
+            tasa_conversion = data['rates'][args['From']]
+            tasa_conversion2 = data['rates'][args['To']]
             self.lblErrorMessages.config(text='')
         else:
             msgError = "{} - {}".format(data['error']['code'], data['error']['type'] )
             print(msgError)
-            raise Exception(msgError)
+            raise APIAccessError(msgError)
 
 
-        valor_label = round(float(self.strInQuantity.get()) / tasa_conversion[0] * tasa_conversion[1], 5)
+        valor_label = round(float(self.strInQuantity.get()) / tasa_conversion * tasa_conversion2, 5)
         self.outQuantityLbl.config(text=valor_label)
 
 
@@ -152,4 +165,4 @@ class MainApp(Tk):
 
 if __name__ == '__main__':
     exchanger = MainApp()
-exchanger.start()
+    exchanger.start()
